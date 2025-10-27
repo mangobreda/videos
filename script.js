@@ -50,6 +50,9 @@ function handleFileSelect(e) {
 function handleFiles(files) {
     const validVideoTypes = ['video/mp4', 'video/webm', 'video/mov', 'video/avi'];
     
+    // Note: localStorage has a size limit (typically 5-10MB). 
+    // For production use, consider using IndexedDB for larger files.
+    
     Array.from(files).forEach(file => {
         if (validVideoTypes.includes(file.type)) {
             const reader = new FileReader();
@@ -70,7 +73,7 @@ function handleFiles(files) {
             
             reader.readAsDataURL(file);
         } else {
-            alert(`File ${file.name} is not a supported video format.`);
+            console.warn(`File ${file.name} is not a supported video format.`);
         }
     });
     
@@ -127,11 +130,18 @@ function addVideoToGallery(videoData) {
                 <span>${formattedDate}</span>
             </div>
             <div class="video-actions">
-                <button class="btn btn-play" onclick="playVideo('${videoData.id}')">Play</button>
-                <button class="btn btn-delete" onclick="deleteVideo('${videoData.id}')">Delete</button>
+                <button class="btn btn-play" data-action="play">Play</button>
+                <button class="btn btn-delete" data-action="delete">Delete</button>
             </div>
         </div>
     `;
+    
+    // Add event listeners for buttons
+    const playBtn = videoCard.querySelector('[data-action="play"]');
+    const deleteBtn = videoCard.querySelector('[data-action="delete"]');
+    
+    playBtn.addEventListener('click', () => playVideo(videoData.id));
+    deleteBtn.addEventListener('click', () => deleteVideo(videoData.id));
     
     videoGallery.appendChild(videoCard);
 }
@@ -153,7 +163,7 @@ function deleteVideo(id) {
     if (confirm('Are you sure you want to delete this video?')) {
         // Remove from storage
         let videos = getVideos();
-        videos = videos.filter(v => v.id != id);
+        videos = videos.filter(v => v.id !== id);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(videos));
         
         // Remove from DOM

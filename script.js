@@ -121,12 +121,16 @@ function addVideoToGallery(videoData) {
     const uploadDate = new Date(videoData.uploadDate);
     const formattedDate = uploadDate.toLocaleDateString();
     
+    // Escape user-provided data to prevent XSS
+    const escapedName = escapeHtml(videoData.name);
+    const escapedSize = escapeHtml(videoData.size);
+    
     videoCard.innerHTML = `
         <video src="${videoData.data}" controls></video>
         <div class="video-info">
-            <h3 title="${videoData.name}">${videoData.name}</h3>
+            <h3 title="${escapedName}">${escapedName}</h3>
             <div class="video-meta">
-                <span>${videoData.size}</span>
+                <span>${escapedSize}</span>
                 <span>${formattedDate}</span>
             </div>
             <div class="video-actions">
@@ -188,4 +192,11 @@ function formatFileSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }

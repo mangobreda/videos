@@ -2,32 +2,50 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Scroll Scrub Video</title>
 
-  <!-- GSAP (for easing + scroll tweening) -->
+  <!-- GSAP (used only for a small delayed call; you can remove if you prefer setTimeout) -->
   <script src="https://unpkg.com/gsap@3/dist/gsap.min.js"></script>
-  <script src="https://unpkg.com/gsap@3/dist/ScrollTrigger.min.js"></script>
 
   <style>
+    :root {
+      --bg: #fafafa;
+      --ink: #111;
+      --hint: 0.6;
+      --loader-track: rgba(0,0,0,0.1);
+      --loader-grad: linear-gradient(90deg, #007aff, #1ac6ff);
+      --stage-h: 100vh;
+      --loader-w: 240px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+    }
+
+    /* Allow scrolling; hide visual scrollbar */
     html, body {
       margin: 0;
       padding: 0;
-      width: 100%;
-      height: 100%;
-      background: #FAFAFA;
-      overflow: hidden; /* prevents scrollbar */
-      font-family: system-ui, sans-serif;
+      overflow-y: auto;
+      overscroll-behavior: none;
+      -ms-overflow-style: none;    /* IE/Edge */
+      scrollbar-width: none;       /* Firefox */
     }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar { display: none; }
 
     .stage {
+      position: sticky;  /* stays pinned while page scrolls */
+      top: 0;
+      height: var(--stage-h);
       width: 100%;
-      height: 100vh; /* exact full screen height */
-      position: relative;
-      background: #FAFAFA;
-      display: flex;
-      justify-content: center;
-      align-items: center;
+      background: var(--bg);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      isolation: isolate;
     }
 
     video {
@@ -35,13 +53,12 @@
       inset: 0;
       width: 100%;
       height: 100%;
-      object-fit: contain; /* always fit horizontally */
-      background: #FAFAFA;
+      object-fit: contain;
+      background: var(--bg);
       opacity: 0;
-      transition: opacity 0.6s ease-out, transform 0.8s ease-out;
       transform: scale(0.995);
+      transition: opacity 0.6s ease-out, transform 0.8s ease-out;
     }
-
     video.ready {
       opacity: 1;
       transform: scale(1);
@@ -52,18 +69,17 @@
       bottom: 40px;
       left: 50%;
       transform: translateX(-50%);
-      width: 240px;
+      width: var(--loader-w);
       height: 4px;
       border-radius: 999px;
-      background: rgba(0, 0, 0, 0.1);
+      background: var(--loader-track);
       overflow: hidden;
     }
-
     .loader i {
       display: block;
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #007aff, #1ac6ff);
+      background: var(--loader-grad);
       transition: width 0.2s linear;
     }
 
@@ -72,82 +88,165 @@
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%);
-      font-weight: 600;
-      font-size: 14px;
-      color: #111;
-      opacity: 0.6;
+      font: 600 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: var(--ink);
+      opacity: var(--hint);
+      user-select: none;
+      pointer-events: none;
+      text-align: center;
+      padding: 0 12px;
+    }
+
+    /* Spacer creates the scrollable distance */
+    .scroll-spacer {
+      height: 5000px; /* tune to change scrub speed (bigger = slower scrub) */
+    }
+
+    @media (max-width: 600px) {
+      .hint { font-size: 13px; }
+      .loader { width: 200px; }
     }
   </style>
 </head>
-
 <body>
-  <div class="stage">
+  <noscript style="display:block;padding:1rem;text-align:center;">
+    This page requires JavaScript for scroll-scrubbing the video.
+  </noscript>
+
+  <div class="stage" aria-label="Scroll-scrub video section">
     <video id="heroVideo" preload="auto" muted playsinline></video>
-    <div class="loader"><i id="progress"></i></div>
+    <div class="loader" aria-hidden="true"><i id="progress"></i></div>
     <div class="hint">Scroll or swipe to explore</div>
   </div>
 
+  <!-- Spacer defines how much scroll we have to scrub through -->
+  <div class="scroll-spacer" id="scrollSpacer" aria-hidden="true"></div>
+
   <script>
-    const video = document.getElementById("heroVideo");
-    const progressBar = document.getElementById("progress");
-    const STAGE = document.querySelector(".stage");
+    (function () {
+      const VIDEO_URL = "Cadac.mp4"; // Adjust to your hosted path if needed
 
-    // ✅ Set your hosted video URL (Framer CDN or your server)
-    const VIDEO_URL = "Cadac.mp4";
+      const video = document.getElementById("heroVideo");
+      const progressBar = document.getElementById("progress");
+      const spacer = document.getElementById("scrollSpacer");
 
-    // Preload video with progress indicator
-    async function preloadVideo(url) {
-      const response = await fetch(url);
-      const reader = response.body.getReader();
-      const contentLength = +response.headers.get("Content-Length");
-      let received = 0;
-      const chunks = [];
+      let rafId = null;
+      let isLoopRunning = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        const percent = (received / contentLength) * 100;
-        progressBar.style.width = percent + "%";
+      // Robust preloader with progress (works even if Content-Length is missing)
+      async function preloadVideo(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Video fetch failed: " + response.status);
+
+        const reader = response.body.getReader();
+        const lenHeader = response.headers.get("Content-Length");
+        const total = lenHeader ? parseInt(lenHeader, 10) : null;
+
+        let received = 0;
+        const chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+
+          if (total) {
+            const pct = Math.min(100, (received / total) * 100);
+            progressBar.style.width = pct.toFixed(1) + "%";
+          } else {
+            // Indeterminate style: gentle looping fill
+            const loopSize = 1_500_000; // arbitrary cycle
+            const pct = ((received % loopSize) / loopSize) * 100;
+            progressBar.style.width = pct.toFixed(1) + "%";
+          }
+        }
+
+        const blob = new Blob(chunks, { type: "video/mp4" });
+        return URL.createObjectURL(blob);
       }
 
-      const blob = new Blob(chunks, { type: "video/mp4" });
-      return URL.createObjectURL(blob);
-    }
+      // Smooth scroll-scrub loop
+      function startScrubLoop() {
+        if (isLoopRunning) return;
+        isLoopRunning = true;
 
-    // Scroll scrub logic
-    function setupScrollScrub() {
-      gsap.registerPlugin(ScrollTrigger);
+        const scrollHeight = spacer.offsetHeight; // total scrollable space
+        const getProgress = () => {
+          const maxScroll = Math.max(1, scrollHeight - window.innerHeight);
+          const y = window.scrollY || window.pageYOffset || 0;
+          return Math.min(1, Math.max(0, y / maxScroll));
+        };
 
-      // Create fake scroll space (1px scroll range = 1% video)
-      const scrollHeight = 5000; // adjust for speed
-      document.body.style.height = scrollHeight + "px";
+        const tick = () => {
+          const progress = getProgress();
+          const duration = video.duration || 0;
+          const safeEnd = Math.max(0, duration - 0.05);
+          const targetTime = progress * safeEnd;
 
-      let targetTime = 0;
-      let rafId;
+          // smooth easing toward target
+          const current = video.currentTime || 0;
+          video.currentTime = current + (targetTime - current) * 0.15;
 
-      const loop = () => {
-        const progress = window.scrollY / (scrollHeight - window.innerHeight);
-        const safeEnd = Math.max(0, (video.duration || 0) - 0.05);
-        targetTime = progress * safeEnd;
-        const current = video.currentTime;
-        video.currentTime += (targetTime - current) * 0.15; // smooth easing
-        rafId = requestAnimationFrame(loop);
-      };
-      loop();
-    }
+          rafId = requestAnimationFrame(tick);
+        };
 
-    // Load video and initialize
-    (async () => {
-      const videoSrc = await preloadVideo(VIDEO_URL);
-      video.src = videoSrc;
+        rafId = requestAnimationFrame(tick);
+      }
 
-      video.addEventListener("loadeddata", () => {
-        // Fade in nicely
-        video.classList.add("ready");
-        gsap.delayedCall(0.3, setupScrollScrub);
+      function stopScrubLoop() {
+        if (rafId) cancelAnimationFrame(rafId);
+        isLoopRunning = false;
+        rafId = null;
+      }
+
+      // Init
+      (async () => {
+        try {
+          const src = await preloadVideo(VIDEO_URL);
+          video.src = src;
+
+          // Ensure metadata (duration) is ready before starting the loop
+          const onLoaded = () => {
+            video.classList.add("ready");
+            // small delay to avoid jank on very fast devices
+            if (window.gsap && gsap.delayedCall) {
+              gsap.delayedCall(0.25, startScrubLoop);
+            } else {
+              setTimeout(startScrubLoop, 250);
+            }
+          };
+
+          if (video.readyState >= 1) {
+            // HAVE_METADATA already
+            onLoaded();
+          } else {
+            video.addEventListener("loadedmetadata", onLoaded, { once: true });
+            // Fallback if some browsers fire loadeddata first
+            video.addEventListener("loadeddata", onLoaded, { once: true });
+          }
+
+          // Helpful diagnostics (optional)
+          video.addEventListener("error", (e) => {
+            console.error("Video error:", e, video.error);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      })();
+
+      // Clean up on page hide/unload
+      window.addEventListener("pagehide", stopScrubLoop);
+      window.addEventListener("visibilitychange", () => {
+        if (document.hidden) stopScrubLoop();
+        else startScrubLoop();
       });
+
+      // Resize safety: if viewport height changes, the progress computation still uses current spacer height.
+      window.addEventListener("resize", () => {
+        // no-op by default; spacer height is fixed in CSS.
+        // If you want scrub speed to scale with viewport, you can recompute spacer.style.height here.
+      }, { passive: true });
     })();
   </script>
 </body>

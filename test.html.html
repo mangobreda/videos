@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scroll & Swipe Scrub — hero.mp4</title>
+
+  <script src="https://unpkg.com/gsap@3/dist/gsap.min.js"></script>
+  <script src="https://unpkg.com/gsap@3/dist/ScrollTrigger.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0; height: 100%; width: 100%;
+      background: #FAFAFA; color: #000; font-family: system-ui, sans-serif;
+      overscroll-behavior: none; touch-action: pan-y;
+    }
+    .pin-wrap { position: relative; width: 100%; }
+    .stage { position: sticky; top: 0; height: 100vh; width: 100%; display: grid; place-items: center; background: #FAFAFA; }
+    .video-wrap { position: relative; width: 100%; height: 100%; overflow: hidden; background: #FAFAFA; }
+
+    video{
+      position:absolute; inset:0; width:100%; height:100%;
+      object-fit:contain; background:#FAFAFA; display:block;
+      opacity:0; transform:scale(.995); will-change:opacity,transform;
+    }
+
+    .label{ position:absolute; left:50%; bottom:2rem; transform:translateX(-50%); color:#111; font-weight:600; font-size:15px; opacity:.9; transition:opacity .25s; }
+    .swipeBadge{ position:absolute; top:12px; right:12px; background:rgba(255,255,255,.7); backdrop-filter:blur(6px); border:1px solid rgba(0,0,0,.1); padding:.35rem .55rem; border-radius:999px; font-size:12px; color:#111; opacity:.9; user-select:none; }
+    .spacer{ height:30vh; }
+
+    .loader{ position:fixed; inset:0; background:#FAFAFA; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.75rem; z-index:9999; color:#111; }
+    .bar{ width:min(520px,80vw); height:6px; border-radius:999px; background:#e0e0e0; overflow:hidden; }
+    .bar i{ display:block; height:100%; width:0%; background:linear-gradient(90deg,#007aff,#1ac6ff); }
+    .hint{ color:#666; font-size:12px; opacity:.9; }
+    .picker{ margin-top:.5rem; }
+    .btn{ appearance:none; border:1px solid #ccc; background:#fff; color:#111; padding:.6rem .9rem; border-radius:10px; cursor:pointer; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="loader" id="loader">
+    <div>Loading video… <span id="pct">0%</span></div>
+    <div class="bar"><i id="barfill"></i></div>
+    <div class="hint">If you opened this with <code>file://</code>, pick your file below.</div>
+    <div class="picker"><input id="fileInput" class="btn" type="file" accept="video/*" /></div>
+  </div>
+
+  <section class="pin-wrap" style="visibility:hidden;">
+    <div class="stage">
+      <div class="video-wrap" id="videoWrap">
+        <video id="hero" playsinline muted preload="auto" webkit-playsinline></video>
+        <div class="label" id="hintLabel">Scroll or swipe</div>
+        <div class="swipeBadge" id="swipeBadge" style="display:none">Swipe to scrub</div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', async () => {
+    gsap.registerPlugin(ScrollTrigger);
+
+    const loader = document.getElementById('loader');
+    const pct = document.getElementById('pct');
+    const barfill = document.getElementById('barfill');
+    const fileInput = document.getElementById('fileInput');
+    const pinWrap = document.querySelector('.pin-wrap');
+    const videoWrap = document.getElementById('videoWrap');
+    const video = document.getElementById('hero');
+    const hintLabel = document.getElementById('hintLabel');
+    const swipeBadge = document.getElementById('swipeBadge');
+
+    async function loadViaFetch(url){
+      const res = await fetch(url);
+      if(!res.ok || !res.body) throw new Error('Fetch failed');
+      const reader = res.body.getReader();
+      const total = Number(res.headers.get('content-length'))||0;
+      let rec=0; const chunks=[];
+      while(true){
+        const {done,value}=await reader.read();
+        if(done) break;
+        chunks.push(value); rec+=value.length;
+        if(total){ const p=Math.round((rec/total)*100); pct.textContent=p+'%'; barfill.style.width=p+'%'; }
+      }
+      return URL.createObjectURL(new Blob(chunks,{type:'video/mp4'}));
+    }
+    function selectLocalFile(){
+      return new Promise(res=>{
+        const onChange=()=>{ const f=fileInput.files?.[0]; if(!f) return; fileInput.removeEventListener('change',onChange); res(URL.createObjectURL(f)); };
+        fileInput.addEventListener('change',onChange);
+        if(fileInput.files?.[0]) onChange();
+      });
+    }
+    function setVideoSource(srcURL){
+      return new Promise(resolve=>{
+        try{ video.pause(); }catch{}
+        try{ if(video.dataset.prevUrl) URL.revokeObjectURL(video.dataset.prevUrl); }catch{}
+        video.src = srcURL; video.dataset.prevUrl = srcURL;
+        video.muted = true; video.setAttribute('playsinline','');
+        const done = ()=>{ cleanup(); resolve(); };
+        const cleanup=()=>['loadedmetadata','loadeddata','canplaythrough','error'].forEach(e=>video.removeEventListener(e,done));
+        ['loadedmetadata','loadeddata','canplaythrough','error'].forEach(e=>video.addEventListener(e,done,{once:true}));
+        try{ video.load(); }catch{}
+        setTimeout(done,3000);
+      });
+    }
+    async function waitFirstDecodedFrame(){
+      await new Promise(res=>{ try{ video.currentTime=0.001; }catch{} video.addEventListener('seeked',()=>res(),{once:true}); });
+      await new Promise(res=>{ try{ video.currentTime=0; }catch{} video.addEventListener('seeked',()=>res(),{once:true}); });
+      if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+        await new Promise(res=>video.requestVideoFrameCallback(()=>res()));
+      }
+    }
+
+    let srcURL=null;
+    if(location.protocol.startsWith('http')){ try{ srcURL=await loadViaFetch('hero.mp4'); }catch{} }
+    if(!srcURL){ pct.textContent='0%'; barfill.style.width='0%'; srcURL = await selectLocalFile(); }
+    await setVideoSource(srcURL);
+
+    try{ await video.play(); }catch{} setTimeout(()=>{ try{ video.pause(); }catch{} },60);
+    await waitFirstDecodedFrame();
+
+    loader.remove();
+    pinWrap.style.visibility='visible';
+    gsap.to(video,{opacity:1, scale:1, duration:0.8, ease:'power2.out'});
+
+    const isMobile = matchMedia('(max-width: 768px)').matches || matchMedia('(pointer: coarse)').matches;
+    if(isMobile) swipeBadge.style.display='block';
+
+    const duration = Math.max(0.1, video.duration || 1);
+    const SAFE_END = Math.max(0, duration - 0.02);
+    let targetTime = 0; let autoPlaying = false;
+    const SMOOTHING = isMobile ? 0.7 : 0.6;
+    const frameStep = 1/60;
+    const SCROLL_DISTANCE = isMobile ? 15 : 20;
+    const AUTOPLAY_THRESHOLD = 0.8;
+    const SNAP_BAND = 0.06;
+
+    function rAFSeek(){
+      if(!autoPlaying){
+        const now = video.currentTime;
+        const next = now + (targetTime - now) * SMOOTHING;
+        const quant = Math.round(next / frameStep) * frameStep;
+        if(Math.abs(quant - now) > frameStep * 0.5)
+          video.currentTime = Math.min(SAFE_END, Math.max(0, quant));
+      }
+      requestAnimationFrame(rAFSeek);
+    }
+    requestAnimationFrame(rAFSeek);
+
+    if(!isMobile){
+      const tl = gsap.timeline({
+        scrollTrigger:{
+          trigger:'.pin-wrap',
+          start:'top top',
+          end:`bottom+=${SCROLL_DISTANCE}% top`,
+          scrub:true, pin:'.stage', anticipatePin:1,
+          onUpdate:(st)=>{
+            if(autoPlaying && Math.abs(st.getVelocity())>10){
+              autoPlaying=false; if(window.__autoTween){ window.__autoTween.kill(); window.__autoTween=null; }
+            }
+          },
+          onScrubComplete:(st)=>{
+            const p=st.progress;
+            if(!autoPlaying && (p<SNAP_BAND || p>1-SNAP_BAND)){
+              const tP = p<.5 ? 0 : 1;
+              gsap.to({p},{p:tP,duration:.35,ease:'power2.out',onUpdate(){ targetTime=this.targets()[0].p*SAFE_END; }});
+              return;
+            }
+            if(!autoPlaying && p>=AUTOPLAY_THRESHOLD){
+              autoPlaying=true;
+              const startP=p;
+              if(window.__autoTween) window.__autoTween.kill();
+              window.__autoTween = gsap.to({p:startP},{
+                p:1, duration:Math.max(.25,(1-startP)*.75), ease:'power2.out',
+                onUpdate(){ targetTime=this.targets()[0].p*SAFE_END; },
+                onComplete(){ autoPlaying=false; window.__autoTween=null; }
+              });
+            }
+          }
+        }
+      });
+      tl.to({p:0},{p:1,ease:'none',onUpdate(){ if(!autoPlaying) targetTime=this.progress()*SAFE_END; }});
+    }
+
+    if(isMobile){
+      let startY=0, startTime=0;
+      const onTouchStart=e=>{ startY=e.touches[0].clientY; startTime=targetTime; autoPlaying=false; if(window.__autoTween){ window.__autoTween.kill(); window.__autoTween=null; } };
+      const onTouchMove=e=>{ e.preventDefault(); const dy=startY-e.touches[0].clientY; const ratio=dy/window.innerHeight; const k=0.9; targetTime=Math.min(SAFE_END,Math.max(0,startTime+ratio*SAFE_END*k)); };
+      const onTouchEnd=()=>{ const p=targetTime/SAFE_END;
+        if(p<SNAP_BAND || p>1-SNAP_BAND){ const tP=p<.5?0:1; gsap.to({p},{p:tP,duration:.35,ease:'power2.out',onUpdate(){ targetTime=this.targets()[0].p*SAFE_END; }}); return; }
+        if(p>=AUTOPLAY_THRESHOLD){ autoPlaying=true; if(window.__autoTween) window.__autoTween.kill();
+          window.__autoTween = gsap.to({p},{p:1,duration:Math.max(.25,(1-p)*.75),ease:'power2.out',onUpdate(){ targetTime=this.targets()[0].p*SAFE_END; },onComplete(){ autoPlaying=false; window.__autoTween=null; }}); }
+      };
+      videoWrap.addEventListener('touchstart',onTouchStart,{passive:false});
+      videoWrap.addEventListener('touchmove', onTouchMove ,{passive:false});
+      videoWrap.addEventListener('touchend',  onTouchEnd  ,{passive:true });
+    }
+
+    if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+      const pump=()=>video.requestVideoFrameCallback(()=>pump()); pump();
+    }
+  });
+  </script>
+</body>
+</html>

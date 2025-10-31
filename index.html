@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Upload & Gallery</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Video Gallery</h1>
+            <p>Upload and manage your video files</p>
+        </header>
+
+        <div class="upload-section">
+            <h2>Upload Video</h2>
+            <div class="upload-area" id="uploadArea">
+                <input type="file" id="videoInput" accept="video/mp4,video/webm,video/mov,video/avi" multiple hidden>
+                <div class="upload-placeholder">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p>Click to upload or drag and drop</p>
+                    <p class="file-types">MP4, WEBM, MOV, AVI</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="gallery-section">
+            <h2>Your Videos</h2>
+            <div id="videoGallery" class="video-gallery">
+                <p class="empty-state">No videos uploaded yet</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
